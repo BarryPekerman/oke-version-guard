@@ -1,0 +1,71 @@
+name: OKE version check
+
+# Weekly check + manual trigger. Opens/updates a GitHub issue when the cluster's
+# Kubernetes version risks falling out of OCI's supported (free) window.
+on:
+  schedule:
+    - cron: "0 6 * * 1"   # Mondays 06:00 UTC
+  workflow_dispatch:
+
+permissions:
+  id-token: write        # required for OIDC token exchange
+  contents: read
+  issues: write          # to open/update the alert issue
+
+concurrency:
+  group: oke-version-guard
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    env:
+      OCI_REGION: ${{ vars.OCI_REGION }}
+      OCI_CLUSTER_ID: ${{ vars.OCI_CLUSTER_ID }}
+      OCI_DOMAIN_URL: ${{ vars.OCI_DOMAIN_URL }}
+      OCI_CLIENT_ID: ${{ vars.OCI_CLIENT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install OCI CLI + jq
+        run: |
+          curl -sSL https://raw.githubusercontent.com/oracle/oci-cli/master/scripts/install/install.sh \
+            | bash -s -- --accept-all-defaults >/dev/null
+          echo "$HOME/bin" >> "$GITHUB_PATH"
+          sudo apt-get -qq update && sudo apt-get -qq install -y jq
+
+      - name: Authenticate to OCI (keyless, OIDC)
+        run: eval "$(bash scripts/oci-auth.sh)"
+
+      - name: Check version
+        id: check
+        run: bash scripts/check-version.sh
+
+      - name: Open/update alert issue
+        if: steps.check.outputs.needs_upgrade == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { status, current, target } = ${{ toJSON(steps.check.outputs) }};
+            const title = `OKE upgrade needed: ${current} → ${target} (${status})`;
+            const body = [
+              `**Status:** ${status}`,
+              `**Current:** ${current}`,
+              `**Target (one minor up):** ${target}`,
+              '',
+              status === 'URGENT'
+                ? '⚠️ Cluster is **already off the supported list** — Oracle may be billing $0.10/hr. Upgrade ASAP.'
+                : 'Cluster is on the **oldest supported** minor; the next OCI retirement will start billing. Upgrade this cycle.',
+              '',
+              'Run the **OKE upgrade** workflow to remediate.',
+            ].join('\n');
+            const existing = await github.rest.issues.listForRepo({
+              owner: context.repo.owner, repo: context.repo.repo,
+              state: 'open', labels: 'oke-version' });
+            if (existing.data.length) {
+              await github.rest.issues.update({ owner: context.repo.owner, repo: context.repo.repo,
+                issue_number: existing.data[0].number, title, body });
+            } else {
+              await github.rest.issues.create({ owner: context.repo.owner, repo: context.repo.repo,
+                title, body, labels: ['oke-version'] });
+            }

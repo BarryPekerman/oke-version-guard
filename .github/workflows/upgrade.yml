@@ -1,0 +1,89 @@
+name: OKE upgrade
+
+# Upgrades the cluster by ONE minor version (control plane -> node pool ->
+# no-surge node cycling), then verifies health. Two ways to run:
+#   * Manual:     Actions -> OKE upgrade -> Run workflow
+#   * Automatic:  after "OKE version check" succeeds, IF repo var AUTO_UPGRADE == 'true'
+# Flip AUTO_UPGRADE to switch between "auto check + manual upgrade" and "fully automatic".
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Target version (blank = auto-detect next minor)"
+        required: false
+        default: ""
+  workflow_run:
+    workflows: ["OKE version check"]
+    types: [completed]
+
+permissions:
+  id-token: write
+  contents: read
+  issues: write
+
+concurrency:
+  group: oke-version-guard        # shared with check -> never overlap
+  cancel-in-progress: false
+
+jobs:
+  upgrade:
+    # Manual dispatch always runs; auto path only when the check succeeded AND AUTO_UPGRADE is on.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' && vars.AUTO_UPGRADE == 'true')
+    runs-on: ubuntu-latest
+    env:
+      OCI_REGION: ${{ vars.OCI_REGION }}
+      OCI_CLUSTER_ID: ${{ vars.OCI_CLUSTER_ID }}
+      OCI_DOMAIN_URL: ${{ vars.OCI_DOMAIN_URL }}
+      OCI_CLIENT_ID: ${{ vars.OCI_CLIENT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install OCI CLI + kubectl + jq
+        run: |
+          curl -sSL https://raw.githubusercontent.com/oracle/oci-cli/master/scripts/install/install.sh \
+            | bash -s -- --accept-all-defaults >/dev/null
+          echo "$HOME/bin" >> "$GITHUB_PATH"
+          sudo apt-get -qq update && sudo apt-get -qq install -y jq
+          curl -sSLo /usr/local/bin/kubectl "https://dl.k8s.io/release/$(curl -sL https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+          sudo chmod +x /usr/local/bin/kubectl
+
+      - name: Authenticate to OCI (keyless, OIDC)
+        run: eval "$(bash scripts/oci-auth.sh)"
+
+      - name: Fetch kubeconfig
+        run: |
+          oci ce cluster create-kubeconfig --cluster-id "$OCI_CLUSTER_ID" --region "$OCI_REGION" \
+            --file "$HOME/.kube/config" --token-version 2.0.0 --kube-endpoint PUBLIC_ENDPOINT
+          echo "KUBECONFIG=$HOME/.kube/config" >> "$GITHUB_ENV"
+
+      - name: Determine target
+        id: check
+        run: bash scripts/check-version.sh
+
+      - name: Upgrade (one minor, with volume snapshot)
+        if: steps.check.outputs.needs_upgrade == 'true'
+        env:
+          SNAPSHOT: "true"
+          TARGET_VERSION: ${{ github.event.inputs.target != '' && github.event.inputs.target || steps.check.outputs.target }}
+        run: bash scripts/upgrade.sh
+
+      - name: Report result to issue
+        if: always() && steps.check.outputs.needs_upgrade == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const ok = '${{ job.status }}' === 'success';
+            const target = '${{ steps.check.outputs.target }}';
+            const existing = await github.rest.issues.listForRepo({
+              owner: context.repo.owner, repo: context.repo.repo, state: 'open', labels: 'oke-version' });
+            const body = ok
+              ? `✅ Upgraded to **${target}**. Cluster verified healthy.`
+              : `❌ Upgrade to **${target}** failed — see the run logs. Cluster left as-is (script aborts on any unhealthy state).`;
+            if (existing.data.length) {
+              await github.rest.issues.createComment({ owner: context.repo.owner, repo: context.repo.repo,
+                issue_number: existing.data[0].number, body });
+              if (ok) await github.rest.issues.update({ owner: context.repo.owner, repo: context.repo.repo,
+                issue_number: existing.data[0].number, state: 'closed' });
+            }

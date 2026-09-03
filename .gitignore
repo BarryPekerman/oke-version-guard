@@ -1,0 +1,6 @@
+# local OCI / kube artifacts — never commit
+.oci/
+*.pem
+*.token
+kubeconfig
+.kube/
