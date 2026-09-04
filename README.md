@@ -2,8 +2,8 @@
 
 Keeps a **free-tier Oracle OKE cluster** from silently falling out of OCI's
 supported Kubernetes window — the condition under which Oracle starts charging
-**$0.10 / cluster / hour**. Runs on GitHub Actions, authenticates to OCI with
-**keyless OIDC** (no stored API key), and can either alert you or upgrade the
+**$0.10 / cluster / hour**. Runs on GitHub Actions, authenticates to OCI with a
+**dedicated least-privilege API key**, and can either alert you or upgrade the
 cluster automatically.
 
 ## How it works
@@ -38,45 +38,51 @@ Set the repo variable `AUTO_UPGRADE`:
 
 ## Setup
 
-### 1. OIDC federation (one-time, in the `oci-setup` repo)
-The trust/group/policy live in `oci-setup/terraform/modules/oidc`. Enable and apply
-**only that module** (never touches the cluster):
+### 1. CI identity (one-time, in the `oci-setup` repo)
+A dedicated least-privilege user + group + policy live in
+`oci-setup/terraform/modules/ci-upgrader`. Enable and apply **only that module**
+(never touches the cluster):
 ```bash
-# in oci-setup/terraform, with enable_oidc=true and the oidc_* vars set:
-terraform plan  -target=module.oidc   # confirm: 0 to destroy
-terraform apply -target=module.oidc
+# in oci-setup/terraform, with enable_ci_upgrader=true, ci_domain_url and ci_user_email set:
+terraform plan  -target=module.ci_upgrader   # confirm: 0 to destroy
+terraform apply -target=module.ci_upgrader
 ```
-`oidc_github_subject` must be `repo:BarryPekerman/oke-version-guard:ref:refs/heads/main`.
+Then upload an API key to the created `svc-oke-upgrader-*` user:
+```bash
+openssl genrsa -out ci_api_key.pem 2048
+openssl rsa -in ci_api_key.pem -pubout -out ci_api_key_public.pem
+oci iam user api-key upload --user-id <ci-user-ocid> --key-file ci_api_key_public.pem  # prints the fingerprint
+```
+The user gets a one-time IDCS activation email — **ignore it**; API-key auth
+doesn't require console activation.
 
-### 2. Repo variables (Settings → Secrets and variables → Actions → Variables)
+### 2. Repo variables (Settings → Secrets and variables → Actions)
+**Variables:**
 | Variable | Example | Notes |
 |---|---|---|
 | `OCI_REGION` | `il-jerusalem-1` | |
 | `OCI_CLUSTER_ID` | `ocid1.cluster.oc1...` | the OKE cluster to guard |
-| `OCI_DOMAIN_URL` | `https://idcs-xxxx.identity.oraclecloud.com` | your identity domain |
-| `OCI_CLIENT_ID` | `<domain OAuth client id>` | client tied to the trust (see below) |
+| `OCI_CLI_USER` | `ocid1.user.oc1...` | the CI user OCID |
+| `OCI_CLI_TENANCY` | `ocid1.tenancy.oc1...` | |
+| `OCI_CLI_FINGERPRINT` | `78:14:…` | from the api-key upload |
+| `OCI_CLI_REGION` | `il-jerusalem-1` | |
 | `AUTO_UPGRADE` | `true` / `false` | mode toggle |
 
-No **secrets** are needed — auth is keyless via OIDC.
+**Secret:** `OCI_CLI_KEY_CONTENT` = the private key PEM (`ci_api_key.pem`).
 
-### 3. ⚠️ Finalize the token exchange (validate once)
-`scripts/oci-auth.sh` follows Oracle's documented UPST token-exchange flow, but the
-domain side needs an **OAuth client** whose `client_id` is listed in the trust's
-`oauth_clients`, and the request/audience must match what your identity domain
-expects. **This is the one piece to test end-to-end on the first manual run** —
-trigger *OKE version check* by hand and confirm the auth step succeeds; adjust
-`OIDC_AUDIENCE` / `OCI_CLIENT_ID` if the exchange is rejected. Everything else
-(version logic, upgrade, node cycling) is provider-stable.
+The OCI CLI reads these `OCI_CLI_*` values from the environment natively — no
+config file needed. The only stored secret is the scoped private key, which can
+do **only** the OKE upgrade actions in the policy (verified: it can `ce cluster
+get` but is denied `iam` admin calls).
 
 ## Files
 ```
 scripts/check-version.sh   classify OK/WARN/URGENT, compute next-minor target
 scripts/upgrade.sh         one-minor upgrade + no-surge node cycling + verify
-scripts/oci-auth.sh        GitHub OIDC → OCI UPST token exchange (keyless)
 .github/workflows/check.yml    weekly check + issue alert
 .github/workflows/upgrade.yml  manual or auto (workflow_run) upgrade
 ```
 
 ## Reuse
-Parameterized entirely by repo variables — point `OCI_CLUSTER_ID` / `OCI_DOMAIN_URL`
-at any OKE cluster (e.g. a second account) with its own OIDC trust.
+Parameterized entirely by repo variables — point `OCI_CLUSTER_ID` at any OKE
+cluster (e.g. a second account) with its own scoped API key.
