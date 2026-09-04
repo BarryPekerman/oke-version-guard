@@ -22,18 +22,22 @@ set -euo pipefail
 
 emit() { # key=value -> stdout and (if in Actions) GITHUB_OUTPUT
   echo "$1"
-  [ -n "${GITHUB_OUTPUT:-}" ] && echo "$1" >>"$GITHUB_OUTPUT"
+  if [ -n "${GITHUB_OUTPUT:-}" ]; then echo "$1" >>"$GITHUB_OUTPUT"; fi
 }
 
 # minor number from a vX.Y.Z string  ->  X*1000 + Y  (sortable int)
-minor_key() { local v="${1#v}"; local maj="${v%%.*}"; local rest="${v#*.}"; local min="${rest%%.*}"; echo $((maj * 1000 + min)); }
+# Tolerant of surrounding quotes / leading 'v' by keeping only digits and dots.
+minor_key() { local v="${1//[^0-9.]/}"; local maj="${v%%.*}"; local rest="${v#*.}"; local min="${rest%%.*}"; echo $(( ${maj:-0} * 1000 + ${min:-0} )); }
+# strip surrounding quotes/whitespace that some OCI CLI builds leave on --raw-output
+clean() { local s="${1//\"/}"; s="${s//[[:space:]]/}"; printf '%s' "$s"; }
 
-CURRENT=$(oci ce cluster get --cluster-id "$OCI_CLUSTER_ID" --region "$OCI_REGION" \
-  --query 'data."kubernetes-version"' --raw-output)
+CURRENT=$(clean "$(oci ce cluster get --cluster-id "$OCI_CLUSTER_ID" --region "$OCI_REGION" \
+  --query 'data."kubernetes-version"' --raw-output)")
 
-# Supported versions, sorted ascending by (major,minor,patch)
+# Supported versions, sorted ascending by (major,minor,patch).
+# Parse with jq (robust) rather than --raw-output, which mishandles arrays on some CLI builds.
 mapfile -t SUPPORTED < <(oci ce cluster-options get --cluster-option-id all --region "$OCI_REGION" \
-  --query 'data."kubernetes-versions"[]' --raw-output | sort -V)
+  --query 'data."kubernetes-versions"' --output json | jq -r '.[]' | sort -V)
 
 if [ "${#SUPPORTED[@]}" -eq 0 ]; then echo "ERROR: could not read supported versions" >&2; exit 1; fi
 
