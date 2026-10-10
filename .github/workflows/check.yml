@@ -59,13 +59,18 @@ jobs:
               '',
               'Run the **OKE upgrade** workflow to remediate.',
             ].join('\n');
+            // Edits don't notify anyone, so assign the owner and @mention them in a
+            // comment on every run — each WARN/URGENT check then sends a notification.
+            const { owner, repo } = context.repo;
             const existing = await github.rest.issues.listForRepo({
-              owner: context.repo.owner, repo: context.repo.repo,
-              state: 'open', labels: 'oke-version' });
+              owner, repo, state: 'open', labels: 'oke-version' });
             if (existing.data.length) {
-              await github.rest.issues.update({ owner: context.repo.owner, repo: context.repo.repo,
-                issue_number: existing.data[0].number, title, body });
+              const issue_number = existing.data[0].number;
+              await github.rest.issues.update({ owner, repo, issue_number, title, body });
+              await github.rest.issues.addAssignees({ owner, repo, issue_number, assignees: [owner] });
+              await github.rest.issues.createComment({ owner, repo, issue_number,
+                body: `@${owner} still pending: ${current} → ${target} (${status}). Run the **OKE upgrade** workflow.` });
             } else {
-              await github.rest.issues.create({ owner: context.repo.owner, repo: context.repo.repo,
-                title, body, labels: ['oke-version'] });
+              await github.rest.issues.create({ owner, repo, title,
+                body: `${body}\n\ncc @${owner}`, labels: ['oke-version'], assignees: [owner] });
             }
