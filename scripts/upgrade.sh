@@ -55,7 +55,7 @@ elif [ "$delta" -eq 0 ]; then
 elif [ "$delta" -ne 1 ]; then
   die "$CURRENT -> $TARGET_VERSION is not a patch or single-minor step (OKE never skips minors)"
 fi
-log "Upgrading $CURRENT -> $TARGET_VERSION"
+[ "$CURRENT" = "$TARGET_VERSION" ] || log "Upgrading $CURRENT -> $TARGET_VERSION"
 
 # --- Preflight: refuse to touch a cluster that isn't already healthy ---
 log "Preflight health check"
@@ -133,8 +133,25 @@ for pool in "${NODE_POOLS[@]}"; do
   [ "$(ociv ce node-pool get --node-pool-id "$pool" "${R[@]}" --query 'data."kubernetes-version"')" = "$TARGET_VERSION" ] \
     && { log "Node pool template $pool already at $TARGET_VERSION"; continue; }
   log "Updating node pool template $pool -> $TARGET_VERSION"
+  # OKE worker images (".../-OKE-1.34.2-1345") pin the k8s version, and OKE rejects a
+  # version-only update for them (409 Conflict). Swap to the newest OKE image for TARGET
+  # on the same OS line, keeping the boot volume size.
+  src=$(oci ce node-pool get --node-pool-id "$pool" "${R[@]}" --query 'data."node-source-details"' --output json)
+  img_name=$(ociv compute image get --image-id "$(jq -r '."image-id"' <<<"$src")" "${R[@]}" --query 'data."display-name"')
+  extra=()
+  if [[ "$img_name" =~ ^(.+)-[0-9]{4}\.[0-9]{2}\.[0-9]{2}-[0-9]+-OKE- ]]; then
+    os_prefix="${BASH_REMATCH[1]}"   # e.g. Oracle-Linux-8.10-aarch64
+    new_img=$(oci ce node-pool-options get --node-pool-option-id "$OCI_CLUSTER_ID" "${R[@]}" --output json \
+      | jq -r --arg p "$os_prefix-" --arg k "-OKE-${TARGET_VERSION#v}-" \
+          '[.data.sources[] | select((."source-name" | startswith($p)) and (."source-name" | contains($k)))]
+           | sort_by(."source-name") | last | ."image-id" // empty')
+    [ -n "$new_img" ] || die "No $os_prefix OKE image for $TARGET_VERSION in node-pool-options; aborting."
+    log "Node image: $img_name -> $new_img"
+    extra=(--node-source-details "$(jq -c --arg i "$new_img" \
+      '{sourceType:"IMAGE", imageId:$i, bootVolumeSizeInGBs:."boot-volume-size-in-gbs"}' <<<"$src")")
+  fi
   oci ce node-pool update --node-pool-id "$pool" "${R[@]}" \
-    --kubernetes-version "$TARGET_VERSION" --wait-for-state SUCCEEDED "${WAIT[@]}" --force >/dev/null
+    --kubernetes-version "$TARGET_VERSION" "${extra[@]}" --wait-for-state SUCCEEDED "${WAIT[@]}" --force >/dev/null
 done
 
 # --- 3) Cycle nodes one at a time, NO surge (stay within 4-OCPU free cap) ---
