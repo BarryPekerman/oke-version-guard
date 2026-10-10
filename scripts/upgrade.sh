@@ -78,9 +78,11 @@ mapfile -t NODE_POOLS < <(oci ce node-pool list --cluster-id "$OCI_CLUSTER_ID" -
 [ "${#NODE_POOLS[@]}" -gt 0 ] || die "No node pool found; aborting."
 log "Node pools: ${NODE_POOLS[*]}"
 
-pool_nodes() { # "<node-ocid> <private-ip> <k8s-version>" per node
+pool_nodes() { # "<node-ocid> <private-ip> <k8s-version>" per live node
+  # OKE keeps DELETED nodes in the pool's node list for a while after cycling.
   oci ce node-pool get --node-pool-id "$1" "${R[@]}" --output json \
-    | jq -r '.data.nodes[] | "\(.id) \(."private-ip") \(."kubernetes-version")"'
+    | jq -r '.data.nodes[] | select(."lifecycle-state" != "DELETED" and ."lifecycle-state" != "DELETING")
+        | "\(.id) \(."private-ip") \(."kubernetes-version")"'
 }
 desired_nodes() { local p n=0; for p in "${NODE_POOLS[@]}"; do
   n=$(( n + $(ociv ce node-pool get --node-pool-id "$p" "${R[@]}" --query 'data."node-config-details".size') )); done; echo "$n"; }
