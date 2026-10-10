@@ -34,7 +34,7 @@ jobs:
     if: >-
       github.event_name == 'workflow_dispatch' ||
       (github.event.workflow_run.conclusion == 'success' && vars.AUTO_UPGRADE == 'true')
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     env:
       OCI_REGION: ${{ vars.OCI_REGION }}
       OCI_CLUSTER_ID: ${{ vars.OCI_CLUSTER_ID }}
