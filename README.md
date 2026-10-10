@@ -11,30 +11,44 @@ cluster automatically.
 ```
 weekly cron ──► check-version.sh ──► OK  → done
                                     │
+                                    ├► PATCH (newer patch of current minor exists)
                                     ├► WARN  (oldest supported minor)
                                     └► URGENT(already unsupported → billing)
                                             │
-                          opens/updates a GitHub issue,  and — if AUTO_UPGRADE=true —
-                          triggers upgrade.yml:
+              opens/updates a GitHub issue (assigned to + @mentioning the owner,
+              so every alerting run notifies), and — if AUTO_UPGRADE=true —
+              triggers upgrade.yml:
                                             │
-              control plane → node-pool template → cycle nodes ONE AT A TIME
-              (drain → delete-node, no surge) → verify /readyz → comment + close issue
+              control plane → node-pool templates → cycle nodes ONE AT A TIME
+              (drain → delete-node, no surge) → verify /readyz + node versions
+              → comment + close issue
 ```
 
 ### Free-tier-safe by design
 - **No surge during node cycling.** Nodes are removed *before* replacements are
   created (`delete-node --is-decrement-size false`), so the cluster never exceeds
   the 4-OCPU Always-Free ceiling. Brief single-node capacity, **zero cost**.
-- **One minor per run.** OKE refuses to skip minors; the script steps exactly one.
+- **One step per run.** The target is always the **newest patch** of either the
+  current minor (PATCH, or URGENT when a patch fixes it) or the next minor
+  (WARN/URGENT). OKE refuses to skip minors; `upgrade.sh` rejects any target that
+  isn't supported, newer, and at most one minor up.
 - **DB-safe.** Data on OCI **block-volume PVCs** detaches/reattaches across the
-  cycle and survives. Optional pre-upgrade volume **snapshot** as a safety net.
+  cycle and survives. Before upgrading, volumes **attached to cluster nodes** are
+  backed up (opt out with the `snapshot` input on manual runs). Only the newest
+  `pre-upgrade-*` backup per volume is kept — Always Free allows 5 volume backups.
 - **Fails closed.** Any unhealthy state (cluster not ACTIVE, a node not Ready,
-  bad `/readyz`, unhealthy pods) aborts before touching anything.
+  bad `/readyz`, Pending/crash-looping pods) aborts before touching anything; a
+  failed drain uncordons the node and aborts before deleting it.
+- **Resumable.** If a run dies midway, re-run *OKE upgrade* with the same target:
+  steps already at that version (control plane, templates, nodes) are skipped.
 
 ## Modes
 Set the repo variable `AUTO_UPGRADE`:
 - `true`  → **fully automatic**: check then upgrade, unattended.
 - `false` → **check + notify only**: you run *OKE upgrade* manually from the Actions tab.
+
+A manual run takes an optional `target` (e.g. `v1.36.4`), which runs even when
+the check reports OK.
 
 ## Setup
 
@@ -55,6 +69,14 @@ oci iam user api-key upload --user-id <ci-user-ocid> --key-file ci_api_key_publi
 ```
 The user gets a one-time IDCS activation email — **ignore it**; API-key auth
 doesn't require console activation.
+
+The policy must also allow the pre-upgrade backups (`volume-backups` alone isn't
+enough — creating a backup needs `VOLUME_WRITE`):
+```
+Allow group <ci-group> to use volumes in compartment id <compartment-ocid>
+```
+Without it, upgrade runs fail at the backup step, before touching the cluster —
+run manually with `snapshot` unchecked to skip backups.
 
 ### 2. Repo variables (Settings → Secrets and variables → Actions)
 **Variables:**

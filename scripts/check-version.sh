@@ -10,9 +10,10 @@
 # Requires: oci CLI (authenticated), jq
 #
 # Outputs (stdout + GITHUB_OUTPUT):
-#   status         OK | WARN | URGENT
+#   status         OK | PATCH | WARN | URGENT
 #   current        current cluster version, e.g. v1.34.2
-#   target         next-minor upgrade target, or "" if none/none-needed
+#   target         upgrade target (always the HIGHEST patch of the chosen minor),
+#                  or "" if none/none-needed
 #   needs_upgrade  true | false
 # ============================================================================
 set -euo pipefail
@@ -49,28 +50,34 @@ OLDEST_K=$(minor_key "$OLDEST")
 in_supported=false
 for v in "${SUPPORTED[@]}"; do [ "$v" = "$CURRENT" ] && in_supported=true && break; done
 
-# Target = lowest supported version whose minor is exactly one above CURRENT's.
-# (OKE upgrades one minor at a time; never skip.)
-TARGET=""
-NEXT_K=$((CUR_K + 1))
-for v in "${SUPPORTED[@]}"; do
-  if [ "$(minor_key "$v")" -eq "$NEXT_K" ]; then TARGET="$v"; break; fi
-done
+# Highest supported patch of a given minor key ("" if that minor isn't offered).
+# SUPPORTED is ascending, so the last match wins.
+latest_of() { local want="$1" v best=""; for v in "${SUPPORTED[@]}"; do [ "$(minor_key "$v")" -eq "$want" ] && best="$v"; done; printf '%s' "$best"; }
 
+SAME_LATEST=$(latest_of "$CUR_K")          # newest patch of the current minor
+NEXT_LATEST=$(latest_of "$((CUR_K + 1))")  # newest patch of the next minor (OKE never skips minors)
+
+TARGET=""
 if ! $in_supported; then
   STATUS="URGENT"   # already off the supported list — likely already billing
-  # fall forward to the lowest supported version at/above current minor
-  if [ -z "$TARGET" ]; then
-    for v in "${SUPPORTED[@]}"; do [ "$(minor_key "$v")" -ge "$CUR_K" ] && TARGET="$v" && break; done
+  # Prefer a patch within the current minor (least disruptive), else step one minor up.
+  if [ -n "$SAME_LATEST" ] && [ "$(printf '%s\n%s\n' "$CURRENT" "$SAME_LATEST" | sort -V | tail -1)" = "$SAME_LATEST" ]; then
+    TARGET="$SAME_LATEST"
+  else
+    TARGET="$NEXT_LATEST"
   fi
 elif [ "$CUR_K" -le "$OLDEST_K" ]; then
   STATUS="WARN"     # oldest supported minor — next OCI retirement drops us off
+  TARGET="$NEXT_LATEST"
+elif [ "$CURRENT" != "$SAME_LATEST" ]; then
+  STATUS="PATCH"    # supported, but OCI deprecates old patches — move to the newest one
+  TARGET="$SAME_LATEST"
 else
   STATUS="OK"
 fi
 
 NEEDS=false; [ "$STATUS" != "OK" ] && NEEDS=true
-# If we should act but there's no higher minor available, there's nothing to do.
+# If we should act but no target version is offered, there's nothing to do.
 if $NEEDS && [ -z "$TARGET" ]; then NEEDS=false; fi
 
 echo "current=$CURRENT  oldest_supported=$OLDEST  status=$STATUS  target=${TARGET:-none}" >&2

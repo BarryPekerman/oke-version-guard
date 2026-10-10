@@ -1,6 +1,6 @@
 name: OKE upgrade
 
-# Upgrades the cluster by ONE minor version (control plane -> node pool ->
+# Upgrades the cluster by ONE minor version or to a newer patch (control plane -> node pools ->
 # no-surge node cycling), then verifies health. Two ways to run:
 #   * Manual:     Actions -> OKE upgrade -> Run workflow
 #   * Automatic:  after "OKE version check" succeeds, IF repo var AUTO_UPGRADE == 'true'
@@ -9,9 +9,13 @@ on:
   workflow_dispatch:
     inputs:
       target:
-        description: "Target version (blank = auto-detect next minor)"
+        description: "Target version (blank = auto-detect: newest patch, or next minor)"
         required: false
         default: ""
+      snapshot:
+        description: "Back up volumes attached to cluster nodes first"
+        type: boolean
+        default: true
   workflow_run:
     workflows: ["OKE version check"]
     types: [completed]
@@ -41,16 +45,12 @@ jobs:
       OCI_CLI_REGION: ${{ vars.OCI_CLI_REGION }}
       OCI_CLI_KEY_CONTENT: ${{ secrets.OCI_CLI_KEY_CONTENT }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - name: Install OCI CLI + kubectl + jq
+      - name: Install OCI CLI (pinned; jq is preinstalled on the runner)
         run: |
-          curl -sSL https://raw.githubusercontent.com/oracle/oci-cli/master/scripts/install/install.sh \
-            | bash -s -- --accept-all-defaults >/dev/null
-          echo "$HOME/bin" >> "$GITHUB_PATH"
-          sudo apt-get -qq update && sudo apt-get -qq install -y jq
-          curl -sSLo /usr/local/bin/kubectl "https://dl.k8s.io/release/$(curl -sL https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
-          sudo chmod +x /usr/local/bin/kubectl
+          pipx install oci-cli==3.77.0
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
       - name: Fetch kubeconfig
         run: |
@@ -62,25 +62,53 @@ jobs:
         id: check
         run: bash scripts/check-version.sh
 
-      - name: Upgrade (one minor, with volume snapshot)
-        if: steps.check.outputs.needs_upgrade == 'true'
+      # A manual target runs even when the check says OK (e.g. a patch-only upgrade);
+      # upgrade.sh validates it (supported + newer patch or exactly one minor up).
+      - name: Resolve target
+        id: target
         env:
-          SNAPSHOT: "true"
-          TARGET_VERSION: ${{ github.event.inputs.target != '' && github.event.inputs.target || steps.check.outputs.target }}
+          INPUT_TARGET: ${{ inputs.target }}
+          CHECK_TARGET: ${{ steps.check.outputs.target }}
+          NEEDS: ${{ steps.check.outputs.needs_upgrade }}
+        run: |
+          target="${INPUT_TARGET:-}"
+          if [ -z "$target" ] && [ "$NEEDS" = "true" ]; then target="$CHECK_TARGET"; fi
+          echo "version=$target" >> "$GITHUB_OUTPUT"
+          echo "target=${target:-none}"
+
+      # kubectl must be within one minor of the apiserver: pin it to the target minor.
+      - name: Install kubectl (target minor)
+        if: steps.target.outputs.version != ''
+        env:
+          TARGET_VERSION: ${{ steps.target.outputs.version }}
+        run: |
+          minor=$(echo "$TARGET_VERSION" | sed -E 's/^v?([0-9]+\.[0-9]+).*/\1/')
+          ver=$(curl -fsSL "https://dl.k8s.io/release/stable-${minor}.txt")
+          sudo curl -fsSLo /usr/local/bin/kubectl "https://dl.k8s.io/release/${ver}/bin/linux/amd64/kubectl"
+          sudo chmod +x /usr/local/bin/kubectl
+          kubectl version --client
+
+      - name: Upgrade
+        if: steps.target.outputs.version != ''
+        env:
+          SNAPSHOT: ${{ github.event_name != 'workflow_dispatch' || inputs.snapshot }}
+          TARGET_VERSION: ${{ steps.target.outputs.version }}
         run: bash scripts/upgrade.sh
 
       - name: Report result to issue
-        if: always() && steps.check.outputs.needs_upgrade == 'true'
-        uses: actions/github-script@v7
+        if: always() && steps.target.outputs.version != ''
+        uses: actions/github-script@v8
+        env:
+          TARGET: ${{ steps.target.outputs.version }}
         with:
           script: |
             const ok = '${{ job.status }}' === 'success';
-            const target = '${{ steps.check.outputs.target }}';
+            const target = process.env.TARGET;
             const existing = await github.rest.issues.listForRepo({
               owner: context.repo.owner, repo: context.repo.repo, state: 'open', labels: 'oke-version' });
             const body = ok
               ? `✅ Upgraded to **${target}**. Cluster verified healthy.`
-              : `❌ Upgrade to **${target}** failed — see the run logs. Cluster left as-is (script aborts on any unhealthy state).`;
+              : `❌ Upgrade to **${target}** failed — see the run logs. The script stops at the first unhealthy state; the control plane may already be upgraded. To finish, re-run **OKE upgrade** with target \`${target}\`.`;
             if (existing.data.length) {
               await github.rest.issues.createComment({ owner: context.repo.owner, repo: context.repo.repo,
                 issue_number: existing.data[0].number, body });
