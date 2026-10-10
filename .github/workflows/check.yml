@@ -75,3 +75,21 @@ jobs:
               await github.rest.issues.create({ owner, repo, title,
                 body: `${body}\n\ncc @${owner}`, labels: ['oke-version'], assignees: [owner] });
             }
+
+      # Closes a leftover alert once the cluster is healthy again (e.g. upgraded by hand,
+      # or an upgrade run whose report step didn't close it).
+      - name: Close resolved alert issue
+        if: steps.check.outputs.status == 'OK'
+        uses: actions/github-script@v8
+        env:
+          CURRENT: ${{ steps.check.outputs.current }}
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const open = await github.rest.issues.listForRepo({
+              owner, repo, state: 'open', labels: 'oke-version' });
+            for (const issue of open.data) {
+              await github.rest.issues.createComment({ owner, repo, issue_number: issue.number,
+                body: `✅ Cluster is on **${process.env.CURRENT}**, the newest supported patch of a non-oldest minor. Closing.` });
+              await github.rest.issues.update({ owner, repo, issue_number: issue.number, state: 'closed' });
+            }

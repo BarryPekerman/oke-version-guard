@@ -50,7 +50,7 @@ delta=$(( $(minor_key "$TARGET_VERSION") - $(minor_key "$CURRENT") ))
 if [ "$CURRENT" = "$TARGET_VERSION" ]; then
   log "Control plane already at $TARGET_VERSION — resuming node pool / node upgrade"
 elif [ "$delta" -eq 0 ]; then
-  [ "$CURRENT" != "$TARGET_VERSION" ] && [ "$(printf '%s\n%s\n' "$CURRENT" "$TARGET_VERSION" | sort -V | tail -1)" = "$TARGET_VERSION" ] \
+  [ "$(printf '%s\n%s\n' "$CURRENT" "$TARGET_VERSION" | sort -V | tail -1)" = "$TARGET_VERSION" ] \
     || die "$TARGET_VERSION is older than current $CURRENT"
 elif [ "$delta" -ne 1 ]; then
   die "$CURRENT -> $TARGET_VERSION is not a patch or single-minor step (OKE never skips minors)"
@@ -111,7 +111,12 @@ if [ "${SNAPSHOT:-false}" = "true" ]; then
     oci bv backup list --compartment-id "$COMPART" --volume-id "$vol" "${R[@]}" --all --output json \
       | jq -r --arg new "$new" '.data[] | select((."display-name" | startswith("pre-upgrade-")) and .id != $new
           and ."lifecycle-state" == "AVAILABLE") | .id' \
-      | while read -r old; do log "Deleting older pre-upgrade backup $old"; oci bv backup delete --volume-backup-id "$old" "${R[@]}" --force; done
+      | while read -r old; do
+          log "Deleting older pre-upgrade backup $old"
+          # Best effort: the new backup already exists; a leftover old one only costs storage.
+          oci bv backup delete --volume-backup-id "$old" "${R[@]}" --force \
+            || echo "WARN: could not delete $old — remove it by hand to stay within 5 free backups" >&2
+        done
   done
 fi
 

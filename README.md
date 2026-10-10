@@ -39,6 +39,9 @@ weekly cron ──► check-version.sh ──► OK  → done
 - **Fails closed.** Any unhealthy state (cluster not ACTIVE, a node not Ready,
   bad `/readyz`, Pending/crash-looping pods) aborts before touching anything; a
   failed drain uncordons the node and aborts before deleting it.
+- **OKE worker images.** Pools booting an OKE image (`…-OKE-1.34.2-…`) can't take a
+  version-only update, so the node-pool step swaps to the newest OKE image for the
+  target on the same OS line, keeping the boot volume size.
 - **Resumable.** If a run dies midway, re-run *OKE upgrade* with the same target:
   steps already at that version (control plane, templates, nodes) are skipped.
 
@@ -52,12 +55,12 @@ the check reports OK.
 
 ## Setup
 
-### 1. CI identity (one-time, in the `oci-setup` repo)
+### 1. CI identity (one-time, in the `oci-k3s-dev-private` repo)
 A dedicated least-privilege user + group + policy live in
-`oci-setup/terraform/modules/ci-upgrader`. Enable and apply **only that module**
+`oci-k3s-dev-private/terraform/modules/ci-upgrader`. Enable and apply **only that module**
 (never touches the cluster):
 ```bash
-# in oci-setup/terraform, with enable_ci_upgrader=true, ci_domain_url and ci_user_email set:
+# in oci-k3s-dev-private/terraform, with enable_ci_upgrader=true, ci_domain_url and ci_user_email set:
 terraform plan  -target=module.ci_upgrader   # confirm: 0 to destroy
 terraform apply -target=module.ci_upgrader
 ```
@@ -70,13 +73,10 @@ oci iam user api-key upload --user-id <ci-user-ocid> --key-file ci_api_key_publi
 The user gets a one-time IDCS activation email — **ignore it**; API-key auth
 doesn't require console activation.
 
-The policy must also allow the pre-upgrade backups (`volume-backups` alone isn't
-enough — creating a backup needs `VOLUME_WRITE`):
-```
-Allow group <ci-group> to use volumes in compartment id <compartment-ocid>
-```
-Without it, upgrade runs fail at the backup step, before touching the cluster —
-run manually with `snapshot` unchecked to skip backups.
+The module's policy includes `use volumes`, which pre-upgrade backups need
+(`volume-backups` alone isn't enough — creating a backup needs `VOLUME_WRITE`).
+If your policy predates that statement, upgrade runs fail at the backup step,
+before touching the cluster — run manually with `snapshot` unchecked to skip backups.
 
 ### 2. Repo variables (Settings → Secrets and variables → Actions)
 **Variables:**
