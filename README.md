@@ -45,6 +45,25 @@ weekly cron ──► check-version.sh ──► OK  → done
 - **Resumable.** If a run dies midway, re-run *OKE upgrade* with the same target:
   steps already at that version (control plane, templates, nodes) are skipped.
 
+## Track record
+
+**2026-10-10: v1.34.2 → v1.35.2 on the live cluster** (2 × A1 nodes, a MediaWiki
+on a block-volume PVC). The check flagged WARN (oldest supported minor); the
+upgrade took two runs the same evening, and each failure stopped safely:
+
+1. **Run 1:** control plane upgraded, then OCI rejected the node-pool update
+   with *409 "Cannot update Kubernetes version which has already been set by
+   OKE worker node image"*. Nodes booted from OKE images pin their version.
+   Stopped before touching a node. **Fix:** swap the pool to the newest OKE
+   image for the target version.
+2. **Run 2:** pool updated, both nodes drained and replaced one at a time on
+   v1.35.2. Only the final check failed:
+   OKE still listed the cycled-out node as `DELETED`. **Fix:** ignore
+   `DELETED`/`DELETING` nodes when verifying.
+
+Result: cluster on v1.35.2, no data lost, €0 spent. The image swap has run for
+real; the `DELETED`-node fix will get its first real run at the next upgrade.
+
 ## Modes
 Set the repo variable `AUTO_UPGRADE`:
 - `true`  → **fully automatic**: check then upgrade, unattended.
@@ -101,7 +120,7 @@ get` but is denied `iam` admin calls).
 ```
 scripts/check-version.sh   classify OK/WARN/URGENT, compute next-minor target
 scripts/upgrade.sh         one-minor upgrade + no-surge node cycling + verify
-.github/workflows/check.yml    weekly check + issue alert
+.github/workflows/check.yml    weekly check + issue alert + schedule keepalive
 .github/workflows/upgrade.yml  manual or auto (workflow_run) upgrade
 ```
 

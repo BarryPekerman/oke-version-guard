@@ -11,6 +11,7 @@ on:
 permissions:
   contents: read
   issues: write          # to open/update the alert issue
+  actions: write         # to re-enable this workflow (keepalive, last step)
 
 concurrency:
   group: oke-version-guard
@@ -93,3 +94,12 @@ jobs:
                 body: `✅ Cluster is on **${process.env.CURRENT}**, the newest supported patch of a non-oldest minor. Closing.` });
               await github.rest.issues.update({ owner, repo, issue_number: issue.number, state: 'closed' });
             }
+
+      # GitHub disables scheduled workflows in public repos after 60 days without
+      # repository activity, and a quiet repo is this tool's normal state.
+      # Re-enabling the workflow through the API resets that timer without commits.
+      - name: Keep the weekly schedule alive
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh api -X PUT "repos/${{ github.repository }}/actions/workflows/check.yml/enable"
