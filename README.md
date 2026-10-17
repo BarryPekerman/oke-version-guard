@@ -74,12 +74,12 @@ the check reports OK.
 
 ## Setup
 
-### 1. CI identity (one-time, in the `oci-k3s-dev-private` repo)
+### 1. CI identity (one-time, in the `oci-oke-infra` repo)
 A dedicated least-privilege user + group + policy live in
-`oci-k3s-dev-private/terraform/modules/ci-upgrader`. Enable and apply **only that module**
+`oci-oke-infra/terraform/modules/ci-upgrader`. Enable and apply **only that module**
 (never touches the cluster):
 ```bash
-# in oci-k3s-dev-private/terraform, with enable_ci_upgrader=true, ci_domain_url and ci_user_email set:
+# in oci-oke-infra/terraform, with enable_ci_upgrader=true, ci_domain_url and ci_user_email set:
 terraform plan  -target=module.ci_upgrader   # confirm: 0 to destroy
 terraform apply -target=module.ci_upgrader
 ```
