@@ -42,7 +42,9 @@ weekly cron ──► check-version.sh ──► OK  → done
 - **OKE worker images.** Pools booting an OKE image (`…-OKE-1.34.2-…`) can't take a
   version-only update, so the node-pool step swaps to the newest OKE image for the
   target on the same OS line, keeping the boot volume size.
-- **Private API.** The cluster's Kubernetes API has no public endpoint. Each run
+- **API not exposed.** The cluster's Kubernetes API isn't reachable from the
+  internet (its endpoint keeps a public IP only for the control plane's own
+  egress; no NSG rule lets anything in). Each run
   opens an OCI Bastion port-forward session with a throwaway SSH key
   (`scripts/bastion-tunnel.sh`), checks `/readyz` through it before anything
   else, and deletes the session at the end, pass or fail.
