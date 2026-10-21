@@ -127,4 +127,5 @@ jobs:
 
       - name: Close bastion tunnel
         if: always() && env.BASTION_SESSION_ID != ''
-        run: oci bastion session delete --session-id "$BASTION_SESSION_ID" --region "$OCI_REGION" --force
+        # Quiet: the response prints the work-request OCID.
+        run: oci bastion session delete --session-id "$BASTION_SESSION_ID" --region "$OCI_REGION" --force >/dev/null
