@@ -97,22 +97,29 @@ The module's policy includes `use volumes`, which pre-upgrade backups need
 If your policy predates that statement, upgrade runs fail at the backup step,
 before touching the cluster — run manually with `snapshot` unchecked to skip backups.
 
-### 2. Repo variables (Settings → Secrets and variables → Actions)
+### 2. Repo variables and secrets (Settings → Secrets and variables → Actions)
+The identifiers are **secrets**, not variables: GitHub prints variables in
+plain text in every run log, and logs are public on a public repo. Secrets
+are masked (`***`).
+
 **Variables:**
 | Variable | Example | Notes |
 |---|---|---|
 | `OCI_REGION` | `il-jerusalem-1` | |
-| `OCI_CLUSTER_ID` | `ocid1.cluster.oc1...` | the OKE cluster to guard |
-| `OCI_CLI_USER` | `ocid1.user.oc1...` | the CI user OCID |
-| `OCI_CLI_TENANCY` | `ocid1.tenancy.oc1...` | |
-| `OCI_CLI_FINGERPRINT` | `78:14:…` | from the api-key upload |
 | `OCI_CLI_REGION` | `il-jerusalem-1` | |
 | `AUTO_UPGRADE` | `true` / `false` | mode toggle |
 
-**Secret:** `OCI_CLI_KEY_CONTENT` = the private key PEM (`ci_api_key.pem`).
+**Secrets:**
+| Secret | Example | Notes |
+|---|---|---|
+| `OCI_CLI_KEY_CONTENT` | `-----BEGIN PRIVATE KEY-----…` | the private key PEM (`ci_api_key.pem`) |
+| `OCI_CLI_USER` | `ocid1.user.oc1...` | the CI user OCID |
+| `OCI_CLI_TENANCY` | `ocid1.tenancy.oc1...` | |
+| `OCI_CLI_FINGERPRINT` | `aa:bb:cc:…` | from the api-key upload |
+| `OCI_CLUSTER_ID` | `ocid1.cluster.oc1...` | the OKE cluster to guard |
 
 The OCI CLI reads these `OCI_CLI_*` values from the environment natively — no
-config file needed. The only stored secret is the scoped private key, which can
+config file needed. The only credential is the scoped private key, which can
 do **only** the OKE upgrade actions in the policy (verified: it can `ce cluster
 get` but is denied `iam` admin calls).
 

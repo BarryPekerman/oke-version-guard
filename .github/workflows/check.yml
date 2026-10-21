@@ -22,11 +22,11 @@ jobs:
     runs-on: ubuntu-24.04
     env:
       OCI_REGION: ${{ vars.OCI_REGION }}
-      OCI_CLUSTER_ID: ${{ vars.OCI_CLUSTER_ID }}
+      OCI_CLUSTER_ID: ${{ secrets.OCI_CLUSTER_ID }}
       # OCI CLI native env auth (scoped API key — no config file needed)
-      OCI_CLI_USER: ${{ vars.OCI_CLI_USER }}
-      OCI_CLI_TENANCY: ${{ vars.OCI_CLI_TENANCY }}
-      OCI_CLI_FINGERPRINT: ${{ vars.OCI_CLI_FINGERPRINT }}
+      OCI_CLI_USER: ${{ secrets.OCI_CLI_USER }}
+      OCI_CLI_TENANCY: ${{ secrets.OCI_CLI_TENANCY }}
+      OCI_CLI_FINGERPRINT: ${{ secrets.OCI_CLI_FINGERPRINT }}
       OCI_CLI_REGION: ${{ vars.OCI_CLI_REGION }}
       OCI_CLI_KEY_CONTENT: ${{ secrets.OCI_CLI_KEY_CONTENT }}
     steps:
