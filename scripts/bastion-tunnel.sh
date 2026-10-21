@@ -39,7 +39,11 @@ SESSION_ID=$(oci bastion session create-port-forwarding "${R[@]}" \
   --target-private-ip "$API_IP" --target-port "$API_PORT" \
   --ssh-public-key-file "$KEY_DIR/key.pub" --session-ttl 10800 \
   --query 'data.id' --raw-output)
-[ -n "${GITHUB_ENV:-}" ] && echo "BASTION_SESSION_ID=$SESSION_ID" >> "$GITHUB_ENV"
+# GITHUB_ENV values are printed in every later step's env block; mask the ID first.
+if [ -n "${GITHUB_ENV:-}" ]; then
+  echo "::add-mask::$SESSION_ID"
+  echo "BASTION_SESSION_ID=$SESSION_ID" >> "$GITHUB_ENV"
+fi
 
 state=""
 for _ in $(seq 1 60); do
