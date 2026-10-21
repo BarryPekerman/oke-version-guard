@@ -52,11 +52,19 @@ jobs:
           pipx install oci-cli==3.77.0
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
-      - name: Fetch kubeconfig
+      # The Kubernetes API is private: reach it through an OCI Bastion port-forward
+      # session. Opened on every run (even when there's nothing to upgrade), so a
+      # broken path shows up here and not halfway through an upgrade.
+      - name: Open bastion tunnel + kubeconfig
+        env:
+          OCI_BASTION_ID: ${{ secrets.OCI_BASTION_ID }}
+          KUBECONFIG: ${{ runner.temp }}/kubeconfig
         run: |
-          oci ce cluster create-kubeconfig --cluster-id "$OCI_CLUSTER_ID" --region "$OCI_REGION" \
-            --file "$HOME/.kube/config" --token-version 2.0.0 --kube-endpoint PUBLIC_ENDPOINT
-          echo "KUBECONFIG=$HOME/.kube/config" >> "$GITHUB_ENV"
+          bash scripts/bastion-tunnel.sh
+          echo "KUBECONFIG=$KUBECONFIG" >> "$GITHUB_ENV"
+
+      - name: Verify API reachable
+        run: kubectl get --raw=/readyz && echo
 
       - name: Determine target
         id: check
@@ -116,3 +124,7 @@ jobs:
               if (ok) await github.rest.issues.update({ owner: context.repo.owner, repo: context.repo.repo,
                 issue_number: existing.data[0].number, state: 'closed' });
             }
+
+      - name: Close bastion tunnel
+        if: always() && env.BASTION_SESSION_ID != ''
+        run: oci bastion session delete --session-id "$BASTION_SESSION_ID" --region "$OCI_REGION" --force
