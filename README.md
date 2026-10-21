@@ -42,6 +42,10 @@ weekly cron ──► check-version.sh ──► OK  → done
 - **OKE worker images.** Pools booting an OKE image (`…-OKE-1.34.2-…`) can't take a
   version-only update, so the node-pool step swaps to the newest OKE image for the
   target on the same OS line, keeping the boot volume size.
+- **Private API.** The cluster's Kubernetes API has no public endpoint. Each run
+  opens an OCI Bastion port-forward session with a throwaway SSH key
+  (`scripts/bastion-tunnel.sh`), checks `/readyz` through it before anything
+  else, and deletes the session at the end, pass or fail.
 - **Resumable.** If a run dies midway, re-run *OKE upgrade* with the same target:
   steps already at that version (control plane, templates, nodes) are skipped.
 
@@ -97,6 +101,9 @@ The module's policy includes `use volumes`, which pre-upgrade backups need
 If your policy predates that statement, upgrade runs fail at the backup step,
 before touching the cluster — run manually with `snapshot` unchecked to skip backups.
 
+It also includes `use bastion` and `manage bastion-session`, so runs can open
+the tunnel to the private API (the bastion itself is `module.bastion` there).
+
 ### 2. Repo variables and secrets (Settings → Secrets and variables → Actions)
 The identifiers are **secrets**, not variables: GitHub prints variables in
 plain text in every run log, and logs are public on a public repo. Secrets
@@ -117,6 +124,7 @@ are masked (`***`).
 | `OCI_CLI_TENANCY` | `ocid1.tenancy.oc1...` | |
 | `OCI_CLI_FINGERPRINT` | `aa:bb:cc:…` | from the api-key upload |
 | `OCI_CLUSTER_ID` | `ocid1.cluster.oc1...` | the OKE cluster to guard |
+| `OCI_BASTION_ID` | `ocid1.bastion.oc1...` | the bastion in front of its private API |
 
 The OCI CLI reads these `OCI_CLI_*` values from the environment natively — no
 config file needed. The only credential is the scoped private key, which can
@@ -127,10 +135,12 @@ get` but is denied `iam` admin calls).
 ```
 scripts/check-version.sh   classify OK/WARN/URGENT, compute next-minor target
 scripts/upgrade.sh         one-minor upgrade + no-surge node cycling + verify
+scripts/bastion-tunnel.sh  bastion session + tunnel + kubeconfig for the private API
 .github/workflows/check.yml    weekly check + issue alert + schedule keepalive
 .github/workflows/upgrade.yml  manual or auto (workflow_run) upgrade
 ```
 
 ## Reuse
-Parameterized entirely by repo variables — point `OCI_CLUSTER_ID` at any OKE
-cluster (e.g. a second account) with its own scoped API key.
+Parameterized entirely by repo variables and secrets — point `OCI_CLUSTER_ID`
+and `OCI_BASTION_ID` at any OKE cluster (e.g. a second account) with its own
+scoped API key.
