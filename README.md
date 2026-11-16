@@ -1,8 +1,8 @@
 # oke-version-guard
 
 Keeps a **free-tier Oracle OKE cluster** from silently falling out of OCI's
-supported Kubernetes window — the condition under which Oracle starts charging
-**$0.10 / cluster / hour**. Runs on GitHub Actions, authenticates to OCI with a
+supported Kubernetes window, where it stops getting fixes and catching up takes
+one upgrade per minor version (OKE can't skip minors). Runs on GitHub Actions, authenticates to OCI with a
 **dedicated least-privilege API key**, and can either alert you or upgrade the
 cluster automatically.
 
@@ -13,7 +13,7 @@ weekly cron ──► check-version.sh ──► OK  → done
                                     │
                                     ├► PATCH (newer patch of current minor exists)
                                     ├► WARN  (oldest supported minor)
-                                    └► URGENT(already unsupported → billing)
+                                    └► URGENT(already unsupported)
                                             │
               opens/updates a GitHub issue (assigned to + @mentioning the owner,
               so every alerting run notifies), and — if AUTO_UPGRADE=true —

@@ -54,8 +54,8 @@ jobs:
               `**Target:** ${target}`,
               '',
               {
-                URGENT: '⚠️ Cluster is **already off the supported list** — Oracle may be billing $0.10/hr. Upgrade ASAP.',
-                WARN:   'Cluster is on the **oldest supported** minor; the next OCI retirement will start billing. Upgrade this cycle.',
+                URGENT: '⚠️ Cluster is **already off the supported list**: no more fixes, and each missed minor is another upgrade. Upgrade ASAP.',
+                WARN:   'Cluster is on the **oldest supported** minor; the next OCI retirement takes it off the supported list. Upgrade this cycle.',
                 PATCH:  'A newer patch of the current minor is available; OCI retires old patches, so move to it.',
               }[status],
               '',

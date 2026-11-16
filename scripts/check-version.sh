@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # ============================================================================
 # check-version.sh — classify whether the OKE cluster's Kubernetes version
-# is at risk of falling out of OCI's supported window (which starts billing
-# $0.10/cluster/hr). Emits a decision to stdout and to $GITHUB_OUTPUT.
+# is at risk of falling out of OCI's supported window (no more fixes, and
+# catching up means one upgrade per minor). Emits a decision to stdout and to $GITHUB_OUTPUT.
 #
 # Env:
 #   OCI_CLUSTER_ID   (required)  OCID of the OKE cluster
@@ -59,7 +59,7 @@ NEXT_LATEST=$(latest_of "$((CUR_K + 1))")  # newest patch of the next minor (OKE
 
 TARGET=""
 if ! $in_supported; then
-  STATUS="URGENT"   # already off the supported list — likely already billing
+  STATUS="URGENT"   # already off the supported list
   # Prefer a patch within the current minor (least disruptive), else step one minor up.
   if [ -n "$SAME_LATEST" ] && [ "$(printf '%s\n%s\n' "$CURRENT" "$SAME_LATEST" | sort -V | tail -1)" = "$SAME_LATEST" ]; then
     TARGET="$SAME_LATEST"
